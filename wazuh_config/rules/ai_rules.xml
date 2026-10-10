@@ -38,4 +38,16 @@
     <group>ai_active_response_audit,</group>
   </rule>
 
+  <rule id="100904" level="12">
+    <decoded_as>json</decoded_as>
+    <field name="event_source">^ai_chatbot$</field>
+    <field name="event_type">^prompt_injection_detected$</field>
+    <description>AI SOC: Prompt injection detected by chatbot security filter.</description>
+    <mitre>
+      <id>T1059</id>
+    </mitre>
+    <group>ai_prompt_injection,ai_security,</group>
+  </rule>
+
+
 </group>

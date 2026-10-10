@@ -40,3 +40,13 @@ wazuh_config/ossec.conf
 docker-compose.yml
 docker-compose.yml.backup
 wazuh_config/.ossec.conf.swp
+
+# Backups and generated frontend dependencies
+*.backup
+node_modules/
+frontend/dist/
+
+# Backups and generated frontend dependencies
+*.backup
+node_modules/
+frontend/dist/

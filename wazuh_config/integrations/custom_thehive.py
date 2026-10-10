@@ -62,16 +62,45 @@ def main():
         "source": "Wazuh-SIEM",
         "sourceRef": str(alert.get("id", "")),
         "observables": [
-            {"dataType": "other", "data": attacker},
-            {"dataType": "other", "data": malicious_input},
+            {"dataType": "other", "data": value}
+            for value in (attacker, malicious_input)
+            if value.strip()
         ],
     }
 
     try:
-        status, created_alert = post_json(hook_url, api_key, alert_payload)
-        alert_id = created_alert.get("_id") or created_alert.get("id")
-        if not alert_id:
-            raise RuntimeError("TheHive did not return an alert ID.")
+        try:
+            status, created_alert = post_json(hook_url, api_key, alert_payload)
+            alert_id = created_alert.get("_id") or created_alert.get("id")
+            if not alert_id:
+                raise RuntimeError("TheHive did not return an alert ID.")
+            print(f"TheHive alert created: HTTP {status}; ID {alert_id}")
+
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            if exc.code != 400 or "already exists" not in error_body.lower():
+                raise
+
+            query_url = "http://thehive-app:9000/api/v1/query"
+            query_payload = {
+                "query": [
+                    {"_name": "listAlert"},
+                    {"_name": "filter", "_eq": {"sourceRef": str(alert.get("id", ""))}},
+                    {"_name": "filter", "_eq": {"source": "Wazuh-SIEM"}},
+                ]
+            }
+            _, matches = post_json(query_url, api_key, query_payload)
+
+            if not isinstance(matches, list) or not matches:
+                raise RuntimeError(
+                    "Duplicate alert reported, but lookup found no matching alert."
+                )
+
+            created_alert = matches[0]
+            alert_id = created_alert.get("_id") or created_alert.get("id")
+            if not alert_id:
+                raise RuntimeError("Existing TheHive alert has no ID.")
+            print(f"Reusing existing TheHive alert: {alert_id}")
 
         case_payload = {
             "title": f"[AI SOC] {description} - {attacker}",
@@ -97,7 +126,7 @@ def main():
             "X-Active-Response-Token",
         )
 
-        print(f"TheHive alert created: HTTP {status}")
+        print(f"TheHive alert processed: ID {alert_id}")
         print(f"TheHive case created: HTTP {case_status}; ID {case_id}")
         print(
             f"Case mapping: HTTP {link_status}; "

@@ -7,6 +7,8 @@ import urllib.request
 import urllib.error
 import sqlite3
 from contextlib import contextmanager
+import re
+import unicodedata
 from fastapi import FastAPI, Header, HTTPException
 
 app = FastAPI()
@@ -14,6 +16,7 @@ app = FastAPI()
 ACTIVE_RESPONSE_TOKEN = os.getenv("ACTIVE_RESPONSE_TOKEN", "")
 THEHIVE_API_KEY = os.getenv("THEHIVE_API_KEY", "")
 DB_PATH = "/app/data/restrictions.db"
+ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "")
 
 PROMPT_FILE = "/app/system_prompt.txt"
 WAZUH_HOST = "wazuh"
@@ -121,9 +124,20 @@ def get_system_prompt():
         return default_prompt
 
 
+@app.get("/session_status")
+async def session_status(user_id: str = Header("anonymous")):
+    if is_flagged(user_id):
+        return {
+            "status": "active_response",
+            "reply": "This session is restricted due to a detected security threat.",
+        }
+
+    return {"status": "success"}
+
+
 @app.post("/chat")
 async def chat(payload: dict, user_id: str = Header("anonymous")):
-    user_input = payload.get("text", "")
+    user_input = str(payload.get("text", ""))
 
     if is_flagged(user_id):
         return {
@@ -132,26 +146,69 @@ async def chat(payload: dict, user_id: str = Header("anonymous")):
         }
 
     system_prompt = get_system_prompt()
-
     log_event = {
         "event_source": "ai_chatbot",
         "user_id": user_id,
         "user_input": user_input,
         "active_prompt": system_prompt,
     }
-
     send_syslog(json.dumps(log_event))
     print(json.dumps(log_event))
     sys.stdout.flush()
 
-    normalized_input = user_input.lower()
-    if "ignore rules" in normalized_input or "reveal keys" in normalized_input:
+    detection = detect_prompt_injection(user_input)
+
+    if detection:
+        event = {
+            "event_source": "ai_chatbot",
+            "event_type": "prompt_injection_detected",
+            "user_id": user_id,
+            "category": detection,
+        }
+        send_syslog(json.dumps(event))
+        print(json.dumps(event))
+        sys.stdout.flush()
+
         return {
             "status": "security_violation",
             "reply": "Request terminated by security policy.",
         }
 
-    return {"status": "success", "reply": "Processed safely."}
+    return {
+        "status": "success",
+        "reply": "Processed safely.",
+    }
+
+
+def detect_prompt_injection(user_input: str) -> str | None:
+    # Normalize case, Unicode and repeated whitespace.
+    text = unicodedata.normalize("NFKC", user_input).casefold()
+    text = re.sub(r"\s+", " ", text).strip()
+
+    patterns = {
+        "instruction_override": [
+            r"\bignore\b.{0,40}\b(previous|prior|above|earlier)\b.{0,30}\b(instructions?|rules?|prompts?)\b",
+            r"\b(disregard|override|bypass)\b.{0,40}\b(instructions?|rules?|safeguards?|restrictions?)\b",
+            r"\bignore\s+rules\b",
+            r"\b(forget|disregard|discard)\b.{0,50}\b(what|everything|all)\b.{0,30}\b(told|instructed|given)\b",
+            r"\b(forget|ignore|disregard)\b.{0,40}\b(before|earlier|previously)\b",
+        ],
+        "sensitive_data_request": [
+            r"\b(reveal|disclose|print|expose|dump)\b.{0,40}\b(secrets?|private keys?|credentials?|api keys?|system prompt)\b",
+            r"\breveal\s+keys\b",
+            r"\b(show|display|provide|give|reveal|expose)\b.{0,50}\b(hidden|internal|secret|private)\b.{0,30}\b(configuration|instructions?|credentials?|keys?|prompt|settings?)\b",
+            r"\b(secret credentials|hidden configuration|internal instructions)\b",
+        ],
+        "priority_manipulation": [
+            r"\b(treat|consider)\b.{0,30}\b(my|this)\b.{0,20}\b(instruction|message|prompt)\b.{0,30}\b(highest priority|system instruction)\b",
+        ],
+    }
+
+    for category, expressions in patterns.items():
+        if any(re.search(pattern, text) for pattern in expressions):
+            return category
+
+    return None
 
 
 @app.post("/update_prompt")
@@ -284,3 +341,28 @@ async def active_response(
         }
 
     return {"status": "active_response_removed", "user_id": user_id}
+
+
+@app.post("/analyst/release")
+async def analyst_release(
+    payload: dict,
+    x_analyst_password: str = Header(""),
+):
+    if not ANALYST_PASSWORD or not secrets.compare_digest(
+        x_analyst_password, ANALYST_PASSWORD
+    ):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_id = str(payload.get("user_id") or "").strip()
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing user_id")
+
+    return await active_response(
+        {
+            "user_id": user_id,
+            "action": "delete",
+            "source": "analyst",
+        },
+        x_active_response_token=ACTIVE_RESPONSE_TOKEN,
+    )
