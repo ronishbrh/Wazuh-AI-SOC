@@ -1,0 +1,160 @@
+
+
+services:
+  ai_app:
+    build: ./ai_app
+    container_name: vulnerable-ai-app
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - shared-logs:/app/logs
+      - ai-restrictions:/app/data
+    environment:
+      - ACTIVE_RESPONSE_TOKEN=${ACTIVE_RESPONSE_TOKEN}
+      - THEHIVE_API_KEY=${THEHIVE_API_KEY}
+    networks:
+      - soc-network
+
+  wazuh:
+    image: wazuh/wazuh-manager:4.7.2
+    container_name: wazuh-manager
+    restart: always
+    ports:
+      - "514:514/udp"
+      - "1514:1514/udp"
+      - "55000:55000"
+    volumes:
+      - shared-logs:/var/log/ai_app:ro
+      - ./wazuh_config/decoders/ai_decoder.xml:/var/ossec/etc/decoders/ai_decoder.xml:ro
+      - ./wazuh_config/rules/ai_rules.xml:/var/ossec/etc/rules/ai_rules.xml:ro
+      - ./wazuh_config/ossec.conf.example:/wazuh-config-mount/etc/ossec.conf:ro
+      - ./wazuh_config/integrations/custom_thehive.py:/var/ossec/integrations/custom-thehive:ro
+      - ./wazuh_config/active-response/ai-active-response.py:/var/ossec/active-response/bin/ai-active-response.py:ro
+      - ./wazuh_config/lists:/var/ossec/etc/lists
+      - ./wazuh_config/shared:/var/ossec/etc/shared
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/root-ca-manager.pem:/etc/ssl/root-ca.pem:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/wazuh.manager.pem:/etc/ssl/filebeat.pem:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/wazuh.manager-key.pem:/etc/ssl/filebeat.key:ro
+    environment:
+      - WAZUH_CLUSTER_PROVIDER=no
+      - WAZUH_ALERT_FORMAT=json
+      - WAZUH_INTEGRATORD_ENABLED=yes
+      - ACTIVE_RESPONSE_TOKEN=${ACTIVE_RESPONSE_TOKEN}
+      - INDEXER_URL=https://wazuh.indexer:9200
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=${WAZUH_INDEXER_PASSWORD}
+      - FILEBEAT_SSL_VERIFICATION_MODE=full
+      - SSL_CERTIFICATE_AUTHORITIES=/etc/ssl/root-ca.pem
+      - SSL_CERTIFICATE=/etc/ssl/filebeat.pem
+      - SSL_KEY=/etc/ssl/filebeat.key
+      - API_USERNAME=wazuh-wui
+      - API_PASSWORD=${WAZUH_API_PASSWORD}
+    networks:
+      - soc-network
+
+  wazuh.indexer:
+    image: wazuh/wazuh-indexer:4.7.2
+    container_name: wazuh-indexer
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9200:9200"
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - wazuh-indexer-data:/var/lib/wazuh-indexer
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/certs/root-ca.pem:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/certs/wazuh.indexer.key:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/certs/wazuh.indexer.pem:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/admin.pem:/usr/share/wazuh-indexer/certs/admin.pem:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/admin-key.pem:/usr/share/wazuh-indexer/certs/admin-key.pem:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/opensearch.yml:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/opensearch-security/internal_users.yml:ro
+    networks:
+      - soc-network
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
+    container_name: thehive-elasticsearch
+    restart: always
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - soc-network
+
+  thehive:
+    image: strangebee/thehive:5.2
+    container_name: thehive-app
+    restart: always
+    ports:
+      - "9000:9000"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    volumes:
+      - thehive-data:/opt/thehive/data
+    networks:
+      - soc-network
+
+  wazuh.dashboard:
+    image: wazuh/wazuh-dashboard:4.7.2
+    container_name: wazuh-dashboard
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5601:5601"
+    environment:
+      - INDEXER_USERNAME=admin
+      - INDEXER_PASSWORD=${WAZUH_INDEXER_PASSWORD}
+      - WAZUH_API_URL=https://wazuh:55000
+      - DASHBOARD_USERNAME=${DASHBOARD_USERNAME}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}
+      - API_USERNAME=wazuh-wui
+      - API_PASSWORD=${WAZUH_API_PASSWORD}
+    volumes:
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/wazuh.dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/wazuh.dashboard-key.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-dashboard/certs/root-ca.pem:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml:ro
+      - ${WAZUH_CONFIG_DIR:-/path/to/wazuh-config}/wazuh_dashboard/wazuh.yml:/usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml:ro
+      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/data/wazuh/config
+      - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+    networks:
+      - soc-network
+    depends_on:
+      - wazuh.indexer
+      - wazuh
+
+
+volumes:
+  es-data:
+  thehive-data:
+  shared-logs:
+  wazuh-indexer-data:
+  wazuh-dashboard-config:
+  wazuh-dashboard-custom:
+  ai-restrictions:
+
+networks:
+  soc-network:
+    driver: bridge

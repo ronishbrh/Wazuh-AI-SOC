@@ -1,0 +1,41 @@
+
+<group name="ai_exploitation,">
+
+  <rule id="100900" level="10">
+    <decoded_as>json</decoded_as>
+    <field name="user_input" type="pcre2">(?i)ignore rules|ignore previous|system instructions</field>
+    <description>AI SOC: Prompt injection attempt detected.</description>
+    <mitre>
+      <id>T1059</id>
+    </mitre>
+    <group>ai_prompt_injection,</group>
+  </rule>
+
+  <rule id="100901" level="10">
+    <decoded_as>json</decoded_as>
+    <field name="user_input" type="pcre2">(?i)reveal keys|expose confidential data|reveal secrets|show credentials</field>
+    <description>AI SOC: Sensitive information extraction attempt detected.</description>
+    <mitre>
+      <id>T1552</id>
+    </mitre>
+    <group>ai_data_exfiltration,</group>
+  </rule>
+
+  <rule id="100902" level="10">
+    <decoded_as>json</decoded_as>
+    <field name="user_input" type="pcre2">(?i)bypass safety|bypass security|disable safeguards|override safety</field>
+    <description>AI SOC: Safety control bypass attempt detected.</description>
+    <mitre>
+      <id>T1562</id>
+    </mitre>
+    <group>ai_safety_bypass,</group>
+  </rule>
+
+  <rule id="100903" level="3">
+    <decoded_as>json</decoded_as>
+    <field name="event_source">^ai_soc_active_response_audit$</field>
+    <description>AI SOC: Active Response audit event.</description>
+    <group>ai_active_response_audit,</group>
+  </rule>
+
+</group>

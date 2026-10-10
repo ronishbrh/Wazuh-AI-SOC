@@ -1,0 +1,4 @@
+<decoder name="ai_json_decoder">
+  <prematch type="pcre2">^\{"event_source"\s*:\s*"ai_chatbot"</prematch>
+  <plugin_decoder offset="after_prematch">JSON_Decoder</plugin_decoder>
+</decoder>

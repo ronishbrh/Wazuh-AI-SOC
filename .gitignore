@@ -1,0 +1,42 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs and runtime databases
+*.log
+*.db
+*.sqlite
+*.sqlite3
+logs/
+data/
+volumes/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Never publish live Wazuh configuration or local backups
+wazuh_config/ossec.conf
+*.backup
+*.bak
+*.swp
+*~
+*.cdb
+
+# Local-only configuration and machine-specific deployment
+wazuh_config/ossec.conf
+docker-compose.yml
+docker-compose.yml.backup
+wazuh_config/.ossec.conf.swp
