@@ -1,4 +1,4 @@
-# Wazuh AI SOC Lab — AI Threat Detection and Automated Response
+# Wazuh AI SOC: AI Threat Detection and Automated Response
 
 A defensive cybersecurity lab integrating a deliberately vulnerable AI chatbot, Wazuh SIEM, TheHive case management, and a custom active-response workflow.
 
