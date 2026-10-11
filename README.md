@@ -1,6 +1,6 @@
 # Wazuh AI SOC: Security Monitoring and Automated Incident Response
 
-A defensive cybersecurity lab integrating a deliberately vulnerable AI chatbot, Wazuh SIEM, TheHive case management, and a custom response workflow.
+A defensive cybersecurity implementation integrating a deliberately vulnerable AI chatbot, Wazuh SIEM, TheHive case management, and a custom response workflow.
 
 This project explores how application-level security events can flow through detection, incident management, session containment, recovery, and audit logging.
 
@@ -60,7 +60,7 @@ The project uses application-level rule-based checks to identify selected suspic
 | `100903` | Active-response audit event | 3 |
 | `100904` | Prompt-injection event reported by the application | 12 |
 
-These rules are specific to this lab and are not intended to provide comprehensive attack detection. The detector is rule-based rather than a trained machine-learning model. Further testing is needed to measure false positives, false negatives, and resistance to obfuscated or multi-turn attacks.
+These rules are specific to this and are not intended to provide comprehensive attack detection. The detector is rule-based rather than a trained machine-learning model. Further testing is needed to measure false positives, false negatives, and resistance to obfuscated or multi-turn attacks.
 
 ## Incident management workflow
 
@@ -99,7 +99,7 @@ The manual recovery workflow was tested: the restriction was removed, normal cha
 
 ## Verification performed
 
-The following behaviors have been exercised during lab testing:
+The following behaviors have been exercised during testing:
 
 - A synthetic prompt-injection event matched a configured Wazuh detection rule.
 - The custom TheHive integration successfully processed an alert, created a case, and recorded a session-to-case mapping.
