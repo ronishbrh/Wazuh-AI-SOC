@@ -15,19 +15,6 @@ import {
 } from 'lucide-react'
 import './App.css'
 
-function getUserId() {
-  const key = 'wazuh-ai-soc-user-id'
-  let id = localStorage.getItem(key)
-
-  if (!id) {
-    id = crypto.randomUUID
-      ? crypto.randomUUID()
-      : `session-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    localStorage.setItem(key, id)
-  }
-
-  return id
-}
 
 const initialMessage = {
   id: 1,
@@ -41,7 +28,7 @@ function App() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [apiOnline, setApiOnline] = useState(null)
-  const [userId] = useState(getUserId)
+  const [userId, setUserId] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const bottomRef = useRef(null)
   const inputRef = useRef(null)
@@ -56,50 +43,66 @@ function App() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, loading])
 
-
   useEffect(() => {
     let cancelled = false
 
-    async function checkSession() {
+    async function initializeSession() {
       try {
-        const response = await fetch('/api/session_status', {
-          headers: { 'user-id': userId },
+        let response = await fetch('/api/session_status', {
+          credentials: 'same-origin',
         })
 
         if (!response.ok) {
-          throw new Error('Session status check failed')
+          response = await fetch('/api/session', {
+            method: 'POST',
+            credentials: 'same-origin',
+          })
+
+          if (!response.ok) {
+            throw new Error('Could not create a server session')
+          }
+        }
+
+        response = await fetch('/api/session_status', {
+          credentials: 'same-origin',
+        })
+
+        if (!response.ok) {
+          throw new Error('Could not verify the session')
         }
 
         const data = await response.json()
 
-        if (cancelled) return
+        if (!cancelled) {
+          setUserId(data.user_id)
+          setApiOnline(true)
 
-        setApiOnline(true)
-
-        if (data.status === 'active_response') {
-          setSessionRestricted(true)
-          setMessages([
-            {
+          if (data.status === 'active_response') {
+            setSessionRestricted(true)
+            setMessages([{
               id: Date.now(),
               role: 'assistant',
               text: data.reply,
               status: 'active_response',
-            },
-          ])
-        } else {
-          setSessionRestricted(false)
+            }])
+          } else {
+            setSessionRestricted(false)
+          }
         }
-      } catch {
+      } catch (error) {
+        console.error('Session initialization failed:', error)
         if (!cancelled) setApiOnline(false)
       }
     }
 
-    checkSession()
+    initializeSession()
 
     return () => {
       cancelled = true
     }
-  }, [userId])
+  }, [])
+
+
 
 
   async function sendMessage(event) {
@@ -123,8 +126,8 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'user-id': userId,
         },
+        credentials: 'same-origin',
         body: JSON.stringify({ text }),
       })
 
@@ -179,6 +182,7 @@ function App() {
           'Content-Type': 'application/json',
           'X-Analyst-Password': analystPassword,
         },
+        credentials: 'same-origin',
         body: JSON.stringify({ user_id: userId }),
       })
 

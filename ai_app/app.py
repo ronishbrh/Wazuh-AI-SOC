@@ -9,7 +9,8 @@ import sqlite3
 from contextlib import contextmanager
 import re
 import unicodedata
-from fastapi import FastAPI, Header, HTTPException
+import hashlib
+from fastapi import FastAPI, Header, HTTPException, Response, Cookie
 
 app = FastAPI()
 
@@ -66,6 +67,14 @@ def initialize_database():
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS app_sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(active_response_audit)")
         }
@@ -105,6 +114,56 @@ def is_flagged(user_id: str) -> bool:
         return row is not None
 
 
+def hash_session_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_app_session():
+    token = secrets.token_urlsafe(32)
+    user_id = secrets.token_hex(16)
+
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO app_sessions (token_hash, user_id) VALUES (?, ?)",
+            (hash_session_token(token), user_id),
+        )
+
+    return {"token": token, "user_id": user_id}
+
+
+def get_session_user_id(session_token: str) -> str:
+    if not session_token:
+        raise HTTPException(status_code=401, detail="Session required")
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM app_sessions WHERE token_hash = ?",
+            (hash_session_token(session_token),),
+        ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    return row[0]
+
+
+@app.post("/session")
+async def create_session(response: Response):
+    session = create_app_session()
+
+    response.set_cookie(
+        key="soc_session",
+        value=session["token"],
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=86400,
+        path="/",
+    )
+
+    return {"user_id": session["user_id"]}
+
+
 def send_syslog(message: str):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -125,18 +184,22 @@ def get_system_prompt():
 
 
 @app.get("/session_status")
-async def session_status(user_id: str = Header("anonymous")):
+async def session_status(soc_session: str = Cookie(default="")):
+    user_id = get_session_user_id(soc_session)
+
     if is_flagged(user_id):
         return {
             "status": "active_response",
             "reply": "This session is restricted due to a detected security threat.",
+            "user_id": user_id,
         }
 
-    return {"status": "success"}
+    return {"status": "success", "user_id": user_id}
 
 
 @app.post("/chat")
-async def chat(payload: dict, user_id: str = Header("anonymous")):
+async def chat(payload: dict, soc_session: str = Cookie(default="")):
+    user_id = get_session_user_id(soc_session)
     user_input = str(payload.get("text", ""))
 
     if is_flagged(user_id):
@@ -174,10 +237,7 @@ async def chat(payload: dict, user_id: str = Header("anonymous")):
             "reply": "Request terminated by security policy.",
         }
 
-    return {
-        "status": "success",
-        "reply": "Processed safely.",
-    }
+    return {"status": "success", "reply": "Processed safely."}
 
 
 def detect_prompt_injection(user_input: str) -> str | None:
@@ -353,10 +413,9 @@ async def analyst_release(
     ):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    user_id = str(payload.get("user_id") or "").strip()
-
+    user_id = str(payload.get("user_id", "")).strip()
     if not user_id:
-        raise HTTPException(status_code=400, detail="Missing user_id")
+        raise HTTPException(status_code=400, detail="user_id required")
 
     return await active_response(
         {
